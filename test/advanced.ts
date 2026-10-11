@@ -293,6 +293,44 @@ test('should skip an aborted job', async () => {
 	await assert.rejects(queue.add(() => {}, {signal: controller.signal}));
 });
 
+test('abort inside a task callback rejects before the operation settles', async () => {
+	const queue = new PQueue({concurrency: 1});
+	const controller = new AbortController();
+	const reason = new Error('synchronous abort');
+	const operation = pDefer<void>();
+	let observedError: unknown;
+	let nextRan = false;
+
+	const task = queue.add(() => {
+		controller.abort(reason);
+		return operation.promise;
+	}, {signal: controller.signal});
+	const handledTask = task.catch((error: unknown) => {
+		observedError = error;
+	});
+	const next = queue.add(() => {
+		nextRan = true;
+	});
+
+	// Let promise reactions and queue bookkeeping run, without releasing the operation.
+	await new Promise<void>(resolve => {
+		setImmediate(resolve);
+	});
+	const errorBeforeRelease = observedError;
+	const nextRanBeforeRelease = nextRan;
+
+	// Always release the operation, including on the broken implementation.
+	operation.resolve();
+	await Promise.all([handledTask, next]);
+	await queue.onIdle();
+
+	assert.equal(errorBeforeRelease, reason);
+	assert.equal(nextRanBeforeRelease, true);
+	assert.equal(queue.pending, 0);
+	assert.equal(queue.size, 0);
+	assert.equal(getEventListeners(controller.signal, 'abort').length, 0);
+});
+
 test('should reject when signal is aborted while task is waiting in queue', async () => {
 	const queue = new PQueue({concurrency: 1});
 	const controller = new AbortController();

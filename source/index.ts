@@ -506,6 +506,10 @@ export default class PQueue<QueueType extends Queue<RunFunction, EnqueueOptionsT
 							};
 
 							signal.addEventListener('abort', eventListener, {once: true});
+							// The task may have aborted synchronously before listener registration.
+							if (signal.aborted) {
+								eventListener();
+							}
 						})]);
 					}
 
