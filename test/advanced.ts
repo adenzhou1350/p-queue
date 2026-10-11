@@ -46,6 +46,74 @@ test('should emit active event per item', async () => {
 	assert.equal(eventCount, items.length);
 });
 
+test('adding from an active listener respects concurrency', async () => {
+	const queue = new PQueue({concurrency: 1});
+	const gate = pDefer<void>();
+	let running = 0;
+	let peak = 0;
+	const work = async () => {
+		running++;
+		peak = Math.max(peak, running);
+		await gate.promise;
+		running--;
+	};
+
+	let nested: Promise<void> | undefined;
+	queue.once('active', () => {
+		nested = queue.add(work);
+	});
+	const first = queue.add(work);
+
+	try {
+		assert.equal(peak, 1);
+		assert.equal(queue.pending, 1);
+		assert.equal(queue.size, 1);
+	} finally {
+		gate.resolve();
+		await Promise.all([first, nested]);
+		await queue.onIdle();
+	}
+
+	assert.equal(peak, 1);
+	assert.equal(queue.pending, 0);
+});
+
+test('active listeners observe the reserved pending task', async () => {
+	const queue = new PQueue({concurrency: 1});
+	const gate = pDefer<void>();
+	let pendingAtActive: number | undefined;
+	queue.once('active', () => {
+		pendingAtActive = queue.pending;
+	});
+
+	const task = queue.add(async () => gate.promise);
+	try {
+		assert.equal(pendingAtActive, 1);
+	} finally {
+		gate.resolve();
+		await task;
+		await queue.onIdle();
+	}
+});
+
+test('throwing active listeners reject without retaining pending capacity', async () => {
+	const queue = new PQueue({concurrency: 1});
+	const failure = new Error('active listener failed');
+	let taskRan = false;
+	queue.once('active', () => {
+		throw failure;
+	});
+
+	await assert.rejects(queue.add(() => {
+		taskRan = true;
+	}), error => error === failure);
+	await queue.onIdle();
+	assert.equal(taskRan, false);
+	assert.equal(queue.pending, 0);
+	assert.equal(await queue.add(() => 'next task'), 'next task');
+	await queue.onIdle();
+});
+
 test('should emit idle event when idle', async () => {
 	const queue = new PQueue({concurrency: 1});
 

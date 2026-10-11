@@ -318,7 +318,6 @@ export default class PQueue<QueueType extends Queue<RunFunction, EnqueueOptionsT
 					this.#initializeIntervalIfNeeded();
 				}
 
-				this.emit('active');
 				job();
 
 				taskStarted = true;
@@ -473,6 +472,9 @@ export default class PQueue<QueueType extends Queue<RunFunction, EnqueueOptionsT
 				let eventListener: (() => void) | undefined;
 
 				try {
+					// Reserve pending capacity before listeners can enqueue more work.
+					this.emit('active');
+
 					// Check abort signal - if aborted, need to decrement the counter
 					// that was incremented in tryToStartAnother
 					try {
